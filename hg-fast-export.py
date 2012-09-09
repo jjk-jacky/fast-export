@@ -148,7 +148,29 @@ def sanitize_name(name,what="branch"):
     sys.stderr.write('Warning: sanitized %s [%s] to [%s]\n' % (what,name,n))
   return n
 
-def export_commit(ui,repo,revision,old_marks,max,count,authors,sob,brmap):
+
+def get_tag_for_rev(repo,mapping_cache,rev_for):
+  l=repo.tagslist()
+  for tag,node in l:
+    tag=sanitize_name(tag,"tag")
+    # ignore latest revision
+    if tag=='tip': continue
+    # ignore tags to nodes that are missing (ie, 'in the future')
+    if node.encode('hex_codec') not in mapping_cache:
+      sys.stderr.write('Tag %s refers to unseen node %s\n' % (tag, node.encode('hex_codec')))
+      continue
+
+    rev=int(mapping_cache[node.encode('hex_codec')])
+    if rev==rev_for:
+      return tag
+
+  return ''
+
+jjk_tag=''
+jjk_rev=0
+jjk_conv={}
+
+def export_commit(ui,repo,revision,old_marks,max,count,authors,sob,brmap,mapping_cache):
   def get_branchname(name):
     if brmap.has_key(name):
       return brmap[name]
@@ -164,6 +186,28 @@ def export_commit(ui,repo,revision,old_marks,max,count,authors,sob,brmap):
 
   if len(parents)==0 and revision != 0:
     wr('reset refs/heads/%s' % branch)
+
+  # jjk: tags
+  global jjk_tag
+  global jjk_rev
+  if jjk_tag!='':
+    sys.stderr.write('Creating tag %s\n' % jjk_tag)
+    wr('tag %s' % jjk_tag)
+    r=jjk_conv.get(jjk_rev,jjk_rev)
+    wr('from :%d' % r)
+    wr('tagger %s %d %s' % (get_author(desc,user,authors),time,timezone))
+    desc='Add tag for version %s' % jjk_tag
+    wr('data %d' % (len(desc)+1)) # wtf?
+    wr(desc)
+    wr()
+    jjk_conv[revision+1]=jjk_rev
+    jjk_tag=''
+    jjk_rev=0
+    return checkpoint(count)
+  tag=get_tag_for_rev(repo,mapping_cache,revision)
+  if tag!='':
+    jjk_tag=tag
+    jjk_rev=revision+1
 
   wr('commit refs/heads/%s' % branch)
   wr('mark :%d' % (revision+1))
@@ -190,7 +234,12 @@ def export_commit(ui,repo,revision,old_marks,max,count,authors,sob,brmap):
     added.sort()
     type='full'
   else:
-    wr('from %s' % revnum_to_revref(parents[0], old_marks))
+    r=revnum_to_revref(parents[0], old_marks)
+    if r[0]==':':
+      r=int(r[1:])
+      r=jjk_conv.get(r,r)
+      r=':%d' % r
+    wr('from %s' % r)
     if len(parents) == 1:
       # later non-merge revision: feed in changed manifest
       # if we have exactly one parent, just take the changes from the
@@ -199,7 +248,12 @@ def export_commit(ui,repo,revision,old_marks,max,count,authors,sob,brmap):
       added,changed,removed=f[1],f[0],f[2]
       type='simple delta'
     else: # a merge with two parents
-      wr('merge %s' % revnum_to_revref(parents[1], old_marks))
+      r=revnum_to_revref(parents[1], old_marks)
+      if r[0]==':':
+        r=int(r[1:])
+        r=jjk_conv.get(r,r)
+        r=':%d' % r
+      wr('merge %s' % r)
       # later merge revision: feed in changed manifest
       # for many files comparing checksums is expensive so only do it for
       # merges where we really need it due to hg's revlog logic
@@ -318,14 +372,14 @@ def hg2git(repourl,m,marksfile,mappingfile,headsfile,tipfile,authors={},sob=Fals
   c=0
   brmap={}
   for rev in range(min,max):
-    c=export_commit(ui,repo,rev,old_marks,max,c,authors,sob,brmap)
+    c=export_commit(ui,repo,rev,old_marks,max,c,authors,sob,brmap,mapping_cache)
 
   state_cache['tip']=max
   state_cache['repo']=repourl
   save_cache(tipfile,state_cache)
   save_cache(mappingfile,mapping_cache)
 
-  c=export_tags(ui,repo,old_marks,mapping_cache,c,authors)
+  #c=export_tags(ui,repo,old_marks,mapping_cache,c,authors)
 
   sys.stderr.write('Issued %d commands\n' % c)
 
