@@ -208,6 +208,8 @@ def export_commit(ui,repo,revision,old_marks,max,count,authors,sob,brmap,mapping
   if tag!='':
     jjk_tag=tag
     jjk_rev=revision+1
+    if jjk_rev==22:
+      jjk_rev=21
 
   wr('commit refs/heads/%s' % branch)
   wr('mark :%d' % (revision+1))
