@@ -248,6 +248,8 @@ def export_commit(ui,repo,revision,old_marks,max,count,authors,sob,brmap,mapping
       added,changed,removed=f[1],f[0],f[2]
       type='simple delta'
     else: # a merge with two parents
+      if jjk_tag!='':
+        jjk_rev=jjk_rev-1
       r=revnum_to_revref(parents[1], old_marks)
       if r[0]==':':
         r=int(r[1:])
